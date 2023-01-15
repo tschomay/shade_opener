@@ -16,7 +16,8 @@ from astral import LocationInfo
 from astral.sun import sun
 
 # Setup Logger
-logging.basicConfig(filename='shade_opener.log', level=logging.DEBUG, format='%(asctime)s %(levelname)s: %(message)s', datefmt='%Y-%m-%d %I:%M:%S%p')
+log_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'shade_opener.log')
+logging.basicConfig(filename=log_path, level=logging.DEBUG, format='%(asctime)s %(levelname)s: %(message)s', datefmt='%Y-%m-%d %I:%M:%S%p')
 logging.info('Program started')
 
 class Servo:
