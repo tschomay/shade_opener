@@ -1,13 +1,13 @@
-
-
-# Servo Control
-
+# Runs window shade control
 
 import sys
+import os
 # GPIO setting require sudo, but wiringpi is only in user directory
 # Quick hack to resolve the path
-sys.path.append('/home/pi/.local/lib/python3.7/site-packages')
+user = os.getlogin()
+sys.path.append(f'/home/{user}/.local/lib/python3.7/site-packages')
 
+import logging
 import time
 import wiringpi
 import RPi.GPIO as GPIO
@@ -15,8 +15,9 @@ from datetime import datetime, timezone, timedelta
 from astral import LocationInfo
 from astral.sun import sun
 
-
-
+# Setup Logger
+logging.basicConfig(filename='shade_opener.log', level=logging.DEBUG, format='%(asctime)s %(levelname)s: %(message)s', datefmt='%Y-%m-%d %I:%M:%S%p')
+logging.info('Program started')
 
 class Servo:
     def __init__(self, delay=0.01, pin=18):
@@ -31,6 +32,7 @@ class Servo:
         '''
         Set servo to full open position
         '''
+        logging.debug('Opening')
         for pulse in range(self.state, self.r_max, 1):
             wiringpi.pwmWrite(self.gpio_pin, pulse)
             self.state = pulse
@@ -41,6 +43,7 @@ class Servo:
         '''
         Set servo to full closed position
         '''
+        logging.debug('Closing')
         for pulse in range(self.state, self.r_min, -1):
             wiringpi.pwmWrite(self.gpio_pin, pulse)
             self.state = pulse
@@ -57,7 +60,7 @@ class Button:
         Move servo to other extreme on button press
         servo: object of the Servo class
         '''
-        print('Button Press')
+        logging.debug('Button Press')
         midpoint = round((self.servo.r_max + self.servo.r_min) / 2)
         if self.servo.state > midpoint:
             self.servo.s_close()
@@ -74,7 +77,6 @@ def main():
     GPIO.setwarnings(False)
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)  # Set initial val off
-    #GPIO.setup(23, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)  # Set initial val off
     
     # Servo Setup
     # use 'GPIO naming'
@@ -88,46 +90,44 @@ def main():
     wiringpi.pwmSetRange(2000)
     
     # Instantiate the servo
-    s = Servo()
-    b = Button(servo=s)
+    servo = Servo()
+    b = Button(servo=servo)
     
+    # Watch for button presses and act on them
     GPIO.add_event_detect(BUTTON_PIN, GPIO.RISING, callback=b.button_press, bouncetime=5000)
+    
+    # Automate open/close with sun
     city = LocationInfo("Durham", "NC", "New York", 35.9, -79.0)
-    # Move back and forth
     try:
         while True:
-            #GPIO.wait_for_edge(BUTTON_PIN, GPIO.RISING)
-            #b.button_press(BUTTON_PIN)
-            #time.sleep(1)
-            
-            # need to set obersvation date. Could make it tomor
             current_time = datetime.now(timezone.utc)
-            s = sun(city.observer, date=current_time)
+            sun_data = sun(city.observer, date=current_time)
             
-            dawn = s['dawn']
-            dusk = s['dusk']
-            if current_time < dawn:
-                # open at dawn
-                delay = (s['dawn'] - datetime.now(timezone.utc)).total_seconds()
+            open_time = sun_data['dawn']
+            close_time = sun_data['dusk']
+            if current_time < open_time:
+                logging.info('Will open at dawn %s UTC' % open_time)
+                delay = (open_time - datetime.now(timezone.utc)).total_seconds()
                 time.sleep(delay)
-                s.s_open() 
-            elif (current_time > dawn) & (current_time < dusk):
-                # Close at dusk
-                delay = (s['dusk'] - datetime.now(timezone.utc)).total_seconds()
+                servo.s_open() 
+            elif (current_time > open_time) & (current_time < close_time):
+                logging.info('Will close at dusk %s UTC' % close_time)
+                delay = (close_time - datetime.now(timezone.utc)).total_seconds()
                 time.sleep(delay)
-                s.s_close()
-            elif current_time > dusk:
-                # Open at dawn tomorrow
-                delay = (s['dawn'] + datetime.timedelta(days=1) - datetime.now(timezone.utc)).total_seconds()
+                servo.s_close()
+            elif current_time > close_time:
+                logging.info('Will open at dawn tomorrow %s UTC' % (open_time + datetime.timedelta(days=1)))
+                delay = (open_time + datetime.timedelta(days=1) - datetime.now(timezone.utc)).total_seconds()
                 time.sleep(delay)
-                s.s_open()
-            
-            # Make sure clocks align
-    except KeyboardInterrupt:
+                servo.s_open()
+            # Avoid immediate open/close events since next event time is projected
+            time.sleep(300)
+    except KeyboardInterrupt as e:
         GPIO.cleanup()
+        logging.critical('Program ended by keyboard interrupt', exc_info=True)
     finally:
-        print('Cleaning up')
         GPIO.cleanup()
+        logging.info('Program ended, cleaning up.', exc_info=True)
         
 
 if __name__ == "__main__":
